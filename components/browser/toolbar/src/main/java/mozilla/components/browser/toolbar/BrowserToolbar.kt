@@ -389,6 +389,12 @@ class BrowserToolbar @JvmOverloads constructor(
         this.urlCommitListener = listener
     }
 
+    fun setSearchShortcut(engineName: String) {
+        val queryWithEnginePrefix = (engineName + displayToolbar.urlView.text + " ")
+        editToolbar.updateUrl(queryWithEnginePrefix)
+        editToolbar.urlView.setSelection(queryWithEnginePrefix.length)
+    }
+
     /**
      * Declare that the actions (navigation actions, browser actions, page actions) have changed and
      * should be updated if needed.
