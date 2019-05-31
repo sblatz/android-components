@@ -17,6 +17,7 @@ import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.content.ContextCompat
+import androidx.core.widget.TextViewCompat
 import mozilla.components.browser.menu.BrowserMenu
 import mozilla.components.browser.menu.BrowserMenuBuilder
 import mozilla.components.browser.toolbar.BrowserToolbar
@@ -95,6 +96,7 @@ internal class DisplayToolbar(
     }
 
     internal val titleView = AppCompatTextView(context).apply {
+        TextViewCompat.setAutoSizeTextTypeWithDefaults(this, TextViewCompat.AUTO_SIZE_TEXT_TYPE_UNIFORM)
         id = R.id.mozac_browser_toolbar_title_view
         gravity = Gravity.CENTER_VERTICAL
         textSize = URL_TEXT_SIZE
@@ -105,6 +107,7 @@ internal class DisplayToolbar(
     }
 
     internal val urlView = AppCompatTextView(context).apply {
+        TextViewCompat.setAutoSizeTextTypeWithDefaults(this, TextViewCompat.AUTO_SIZE_TEXT_TYPE_UNIFORM)
         id = R.id.mozac_browser_toolbar_url_view
         gravity = Gravity.CENTER_VERTICAL
         textSize = URL_TEXT_SIZE

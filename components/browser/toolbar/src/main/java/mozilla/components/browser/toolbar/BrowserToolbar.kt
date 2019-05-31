@@ -227,7 +227,7 @@ class BrowserToolbar @JvmOverloads constructor(
         get() = displayToolbar.urlView.textSize
         set(value) {
             displayToolbar.urlView.textSize = value
-            editToolbar.urlView.textSize = value
+            editToolbar.urlView.textSize = value / 2
         }
 
     /**
