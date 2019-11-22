@@ -15,6 +15,7 @@ permalink: /changelog/
 * **browser-errorpages**
   * Added strings for "no network connection" error pages
 
+
 # 23.0.0
 
 * [Commits](https://github.com/mozilla-mobile/android-components/compare/v22.0.0...v23.0.0)
