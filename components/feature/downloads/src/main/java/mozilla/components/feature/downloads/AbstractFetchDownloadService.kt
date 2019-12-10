@@ -51,6 +51,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.Timer
+import java.util.TimerTask
 import kotlin.random.Random
 
 /**
@@ -61,6 +63,8 @@ import kotlin.random.Random
  */
 @Suppress("TooManyFunctions", "LargeClass")
 abstract class AbstractFetchDownloadService : Service() {
+
+    private var notificationTimer = Timer()
 
     protected abstract val httpClient: Client
     @VisibleForTesting
@@ -211,6 +215,7 @@ abstract class AbstractFetchDownloadService : Service() {
 
         val notification = try {
             performDownload(currentDownloadJobState.state)
+            notificationTimer.cancel()
             when (currentDownloadJobState.status) {
                 DownloadJobStatus.PAUSED -> {
                     DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
@@ -257,10 +262,29 @@ abstract class AbstractFetchDownloadService : Service() {
         context.registerReceiver(broadcastReceiver, filter)
     }
 
-    private fun displayOngoingDownloadNotification(download: DownloadState) {
+    /***
+     * Android rate limits notifications being sent, so we must send them on a delay so that
+     * notifications are not dropped
+     */
+    private fun beginOngoingNotificationProgressUpdates(downloadID: Long) {
+        notificationTimer = Timer()
+        val downloadJobState = downloadJobs[downloadID] ?: return
+        val download = downloadJobState.state
+
+        val timerTask = object : TimerTask() {
+            override fun run() {
+                displayOngoingDownloadNotification(download, downloadJobState.currentBytesCopied)
+            }
+        }
+
+        notificationTimer.scheduleAtFixedRate(timerTask, 0, PROGRESS_UPDATE_INTERVAL)
+    }
+
+    private fun displayOngoingDownloadNotification(download: DownloadState, bytesCopied: Long) {
         val ongoingDownloadNotification = DownloadNotification.createOngoingDownloadNotification(
             context,
-            download
+            download,
+            bytesCopied
         )
 
         NotificationManagerCompat.from(context).notify(
@@ -295,7 +319,7 @@ abstract class AbstractFetchDownloadService : Service() {
             val newDownloadState = download.withResponse(response.headers, inStream)
             downloadJobs[download.id]?.state = newDownloadState
 
-            displayOngoingDownloadNotification(newDownloadState)
+            beginOngoingNotificationProgressUpdates(newDownloadState.id)
 
             useFileStream(newDownloadState, isResumingDownload) { outStream ->
                 copyInChunks(downloadJobs[download.id]!!, inStream, outStream)
@@ -455,6 +479,7 @@ abstract class AbstractFetchDownloadService : Service() {
         private const val CHUNK_SIZE = 4 * 1024
         private const val PARTIAL_CONTENT_STATUS = 206
         private const val OK_STATUS = 200
+        private const val PROGRESS_UPDATE_INTERVAL = 500L
 
         const val EXTRA_DOWNLOAD = "mozilla.components.feature.downloads.extras.DOWNLOAD"
         const val EXTRA_DOWNLOAD_STATUS = "mozilla.components.feature.downloads.extras.DOWNLOAD_STATUS"
