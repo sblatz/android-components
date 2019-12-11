@@ -21,6 +21,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationManagerCompat
@@ -30,6 +31,9 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mozilla.components.browser.state.state.content.DownloadState
 import mozilla.components.concept.fetch.Client
@@ -64,6 +68,7 @@ import kotlin.random.Random
 @Suppress("TooManyFunctions", "LargeClass")
 abstract class AbstractFetchDownloadService : Service() {
 
+    private val notificationUpdateScope = MainScope()
     private var notificationTimer = Timer()
 
     protected abstract val httpClient: Client
@@ -186,7 +191,21 @@ abstract class AbstractFetchDownloadService : Service() {
             startDownloadJob(download.id)
         }
 
+        notificationUpdateScope.launch {
+            while (true) {
+                delay(PROGRESS_UPDATE_INTERVAL)
+                updateProgress()
+            }
+        }
+
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun updateProgress() {
+        for (download in downloadJobs.values) {
+            if (download.status != DownloadJobStatus.ACTIVE) { continue }
+            displayOngoingDownloadNotification(download.state, download.currentBytesCopied)
+        }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -208,6 +227,9 @@ abstract class AbstractFetchDownloadService : Service() {
         downloadJobs.values.forEach {
             it.job?.cancel()
         }
+
+        Log.d("Sawyer", "onDestroy")
+        notificationUpdateScope.cancel()
     }
 
     internal fun startDownloadJob(downloadId: Long) {
@@ -266,6 +288,8 @@ abstract class AbstractFetchDownloadService : Service() {
      * Android rate limits notifications being sent, so we must send them on a delay so that
      * notifications are not dropped
      */
+
+    /*
     private fun beginOngoingNotificationProgressUpdates(downloadID: Long) {
         notificationTimer = Timer()
         val downloadJobState = downloadJobs[downloadID] ?: return
@@ -279,6 +303,8 @@ abstract class AbstractFetchDownloadService : Service() {
 
         notificationTimer.scheduleAtFixedRate(timerTask, 0, PROGRESS_UPDATE_INTERVAL)
     }
+
+     */
 
     private fun displayOngoingDownloadNotification(download: DownloadState, bytesCopied: Long) {
         val ongoingDownloadNotification = DownloadNotification.createOngoingDownloadNotification(
@@ -319,7 +345,7 @@ abstract class AbstractFetchDownloadService : Service() {
             val newDownloadState = download.withResponse(response.headers, inStream)
             downloadJobs[download.id]?.state = newDownloadState
 
-            beginOngoingNotificationProgressUpdates(newDownloadState.id)
+            //beginOngoingNotificationProgressUpdates(newDownloadState.id)
 
             useFileStream(newDownloadState, isResumingDownload) { outStream ->
                 copyInChunks(downloadJobs[download.id]!!, inStream, outStream)
