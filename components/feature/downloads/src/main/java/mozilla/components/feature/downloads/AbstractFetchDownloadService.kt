@@ -128,8 +128,9 @@ abstract class AbstractFetchDownloadService : Service() {
                         NotificationManagerCompat.from(context).cancel(
                             currentDownloadJobState.foregroundServiceId
                         )
-                        currentDownloadJobState.status = DownloadJobStatus.CANCELLED
-
+                        synchronized(this) {
+                            currentDownloadJobState.status = DownloadJobStatus.CANCELLED
+                        }
                         currentDownloadJobState.job?.cancel()
 
                         currentDownloadJobState.job = CoroutineScope(IO).launch {
@@ -249,14 +250,16 @@ abstract class AbstractFetchDownloadService : Service() {
             performDownload(currentDownloadJobState.state)
             when (currentDownloadJobState.status) {
                 DownloadJobStatus.PAUSED -> {
-                    DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
+                    synchronized(this) {
+                        DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
+                    }
                 }
 
                 DownloadJobStatus.ACTIVE -> {
                     synchronized(this) {
                         currentDownloadJobState.status = DownloadJobStatus.COMPLETED
+                        DownloadNotification.createDownloadCompletedNotification(context, currentDownloadJobState.state)
                     }
-                    DownloadNotification.createDownloadCompletedNotification(context, currentDownloadJobState.state)
                 }
 
                 DownloadJobStatus.FAILED -> {
@@ -270,12 +273,14 @@ abstract class AbstractFetchDownloadService : Service() {
             DownloadNotification.createDownloadFailedNotification(context, currentDownloadJobState.state)
         }
 
-        NotificationManagerCompat.from(context).notify(
-            currentDownloadJobState.foregroundServiceId,
-            notification
-        )
+        synchronized(this) {
+            NotificationManagerCompat.from(context).notify(
+                currentDownloadJobState.foregroundServiceId,
+                notification
+            )
 
-        sendDownloadCompleteBroadcast(downloadId, currentDownloadJobState.status)
+            sendDownloadCompleteBroadcast(downloadId, currentDownloadJobState.status)
+        }
     }
 
     internal fun deleteDownloadingFile(downloadState: DownloadState) {
@@ -295,6 +300,7 @@ abstract class AbstractFetchDownloadService : Service() {
         context.registerReceiver(broadcastReceiver, filter)
     }
 
+    @Synchronized
     private fun displayOngoingDownloadNotification(download: DownloadState, bytesCopied: Long) {
         val ongoingDownloadNotification = DownloadNotification.createOngoingDownloadNotification(
             context,
