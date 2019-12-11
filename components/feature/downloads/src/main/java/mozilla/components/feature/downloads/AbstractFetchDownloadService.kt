@@ -21,7 +21,6 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
-import android.util.Log
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationManagerCompat
@@ -34,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import mozilla.components.browser.state.state.content.DownloadState
 import mozilla.components.concept.fetch.Client
@@ -55,8 +55,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.Timer
-import java.util.TimerTask
 import kotlin.random.Random
 
 /**
@@ -69,7 +67,6 @@ import kotlin.random.Random
 abstract class AbstractFetchDownloadService : Service() {
 
     private val notificationUpdateScope = MainScope()
-    private var notificationTimer = Timer()
 
     protected abstract val httpClient: Client
     @VisibleForTesting
@@ -108,13 +105,17 @@ abstract class AbstractFetchDownloadService : Service() {
 
                 when (intent.action) {
                     ACTION_PAUSE -> {
-                        currentDownloadJobState.status = DownloadJobStatus.PAUSED
+                        synchronized(this) {
+                            currentDownloadJobState.status = DownloadJobStatus.PAUSED
+                        }
                         currentDownloadJobState.job?.cancel()
                         emitNotificationPauseFact()
                     }
 
                     ACTION_RESUME -> {
-                        currentDownloadJobState.status = DownloadJobStatus.ACTIVE
+                        synchronized(this) {
+                            currentDownloadJobState.status = DownloadJobStatus.ACTIVE
+                        }
 
                         currentDownloadJobState.job = CoroutineScope(IO).launch {
                             startDownloadJob(downloadId)
@@ -143,7 +144,10 @@ abstract class AbstractFetchDownloadService : Service() {
                         NotificationManagerCompat.from(context).cancel(
                             currentDownloadJobState.foregroundServiceId
                         )
-                        currentDownloadJobState.status = DownloadJobStatus.ACTIVE
+
+                        synchronized(this) {
+                            currentDownloadJobState.status = DownloadJobStatus.ACTIVE
+                        }
 
                         currentDownloadJobState.job = CoroutineScope(IO).launch {
                             startDownloadJob(downloadId)
@@ -192,25 +196,32 @@ abstract class AbstractFetchDownloadService : Service() {
         }
 
         notificationUpdateScope.launch {
-            while (true) {
+            while (isActive) {
                 delay(PROGRESS_UPDATE_INTERVAL)
-                updateProgress()
+                updateDownloadNotificationProgress()
             }
         }
 
         return super.onStartCommand(intent, flags, startId)
     }
 
-    private fun updateProgress() {
+    /***
+     * Android rate limits notifications being sent, so we must send them on a delay so that
+     * notifications are not dropped
+     */
+    @Synchronized
+    private fun updateDownloadNotificationProgress() {
         for (download in downloadJobs.values) {
             if (download.status != DownloadJobStatus.ACTIVE) { continue }
+            // We must be synchronized here to avoid the status getting set to PAUSED on this line
+            // and then overwriting that with an ongoing notification anyway
             displayOngoingDownloadNotification(download.state, download.currentBytesCopied)
         }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // If the task gets removed (app gets swiped away in the task switcher) our process and this
-        // servies gets killed. In this situation we remove the notification since the download will
+        // service gets killed. In this situation we remove the notification since the download will
         // stop and cannot be controlled via the notification anymore (until we persist enough data
         // to resume downloads from a new process).
 
@@ -228,7 +239,6 @@ abstract class AbstractFetchDownloadService : Service() {
             it.job?.cancel()
         }
 
-        Log.d("Sawyer", "onDestroy")
         notificationUpdateScope.cancel()
     }
 
@@ -237,14 +247,15 @@ abstract class AbstractFetchDownloadService : Service() {
 
         val notification = try {
             performDownload(currentDownloadJobState.state)
-            notificationTimer.cancel()
             when (currentDownloadJobState.status) {
                 DownloadJobStatus.PAUSED -> {
                     DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
                 }
 
                 DownloadJobStatus.ACTIVE -> {
-                    currentDownloadJobState.status = DownloadJobStatus.COMPLETED
+                    synchronized(this) {
+                        currentDownloadJobState.status = DownloadJobStatus.COMPLETED
+                    }
                     DownloadNotification.createDownloadCompletedNotification(context, currentDownloadJobState.state)
                 }
 
@@ -283,28 +294,6 @@ abstract class AbstractFetchDownloadService : Service() {
 
         context.registerReceiver(broadcastReceiver, filter)
     }
-
-    /***
-     * Android rate limits notifications being sent, so we must send them on a delay so that
-     * notifications are not dropped
-     */
-
-    /*
-    private fun beginOngoingNotificationProgressUpdates(downloadID: Long) {
-        notificationTimer = Timer()
-        val downloadJobState = downloadJobs[downloadID] ?: return
-        val download = downloadJobState.state
-
-        val timerTask = object : TimerTask() {
-            override fun run() {
-                displayOngoingDownloadNotification(download, downloadJobState.currentBytesCopied)
-            }
-        }
-
-        notificationTimer.scheduleAtFixedRate(timerTask, 0, PROGRESS_UPDATE_INTERVAL)
-    }
-
-     */
 
     private fun displayOngoingDownloadNotification(download: DownloadState, bytesCopied: Long) {
         val ongoingDownloadNotification = DownloadNotification.createOngoingDownloadNotification(
