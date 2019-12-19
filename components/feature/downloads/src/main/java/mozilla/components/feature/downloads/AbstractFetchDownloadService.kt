@@ -105,7 +105,7 @@ abstract class AbstractFetchDownloadService : Service() {
 
                 when (intent.action) {
                     ACTION_PAUSE -> {
-                        synchronized(this) {
+                        synchronized(context) {
                             currentDownloadJobState.status = DownloadJobStatus.PAUSED
                         }
                         currentDownloadJobState.job?.cancel()
@@ -113,7 +113,7 @@ abstract class AbstractFetchDownloadService : Service() {
                     }
 
                     ACTION_RESUME -> {
-                        synchronized(this) {
+                        synchronized(context) {
                             currentDownloadJobState.status = DownloadJobStatus.ACTIVE
                         }
 
@@ -128,7 +128,7 @@ abstract class AbstractFetchDownloadService : Service() {
                         NotificationManagerCompat.from(context).cancel(
                             currentDownloadJobState.foregroundServiceId
                         )
-                        synchronized(this) {
+                        synchronized(context) {
                             currentDownloadJobState.status = DownloadJobStatus.CANCELLED
                         }
                         currentDownloadJobState.job?.cancel()
@@ -146,7 +146,7 @@ abstract class AbstractFetchDownloadService : Service() {
                             currentDownloadJobState.foregroundServiceId
                         )
 
-                        synchronized(this) {
+                        synchronized(context) {
                             currentDownloadJobState.status = DownloadJobStatus.ACTIVE
                         }
 
@@ -210,13 +210,14 @@ abstract class AbstractFetchDownloadService : Service() {
      * Android rate limits notifications being sent, so we must send them on a delay so that
      * notifications are not dropped
      */
-    @Synchronized
     private fun updateDownloadNotificationProgress() {
-        for (download in downloadJobs.values) {
-            if (download.status != DownloadJobStatus.ACTIVE) { continue }
-            // We must be synchronized here to avoid the status getting set to PAUSED on this line
-            // and then overwriting that with an ongoing notification anyway
-            displayOngoingDownloadNotification(download.state, download.currentBytesCopied)
+        synchronized(context) {
+            for (download in downloadJobs.values) {
+                if (download.status != DownloadJobStatus.ACTIVE) { continue }
+                // We must be synchronized here to avoid the status getting set to PAUSED on this line
+                // and then overwriting that with an ongoing notification anyway
+                displayOngoingDownloadNotification(download.state, download.currentBytesCopied)
+            }
         }
     }
 
@@ -250,13 +251,13 @@ abstract class AbstractFetchDownloadService : Service() {
             performDownload(currentDownloadJobState.state)
             when (currentDownloadJobState.status) {
                 DownloadJobStatus.PAUSED -> {
-                    synchronized(this) {
+                    synchronized(context) {
                         DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
                     }
                 }
 
                 DownloadJobStatus.ACTIVE -> {
-                    synchronized(this) {
+                    synchronized(context) {
                         currentDownloadJobState.status = DownloadJobStatus.COMPLETED
                         DownloadNotification.createDownloadCompletedNotification(context, currentDownloadJobState.state)
                     }
@@ -273,7 +274,7 @@ abstract class AbstractFetchDownloadService : Service() {
             DownloadNotification.createDownloadFailedNotification(context, currentDownloadJobState.state)
         }
 
-        synchronized(this) {
+        synchronized(context) {
             NotificationManagerCompat.from(context).notify(
                 currentDownloadJobState.foregroundServiceId,
                 notification
@@ -300,7 +301,6 @@ abstract class AbstractFetchDownloadService : Service() {
         context.registerReceiver(broadcastReceiver, filter)
     }
 
-    @Synchronized
     private fun displayOngoingDownloadNotification(download: DownloadState, bytesCopied: Long) {
         val ongoingDownloadNotification = DownloadNotification.createOngoingDownloadNotification(
             context,
@@ -308,10 +308,12 @@ abstract class AbstractFetchDownloadService : Service() {
             bytesCopied
         )
 
-        NotificationManagerCompat.from(context).notify(
-            downloadJobs[download.id]?.foregroundServiceId ?: 0,
-            ongoingDownloadNotification
-        )
+        synchronized(context) {
+            NotificationManagerCompat.from(context).notify(
+                downloadJobs[download.id]?.foregroundServiceId ?: 0,
+                ongoingDownloadNotification
+            )
+        }
     }
 
     @Suppress("ComplexCondition")
