@@ -21,6 +21,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationManagerCompat
@@ -105,7 +106,9 @@ abstract class AbstractFetchDownloadService : Service() {
 
                 when (intent.action) {
                     ACTION_PAUSE -> {
+                        // TODO: Consider removing `synchronized` here
                         synchronized(context) {
+                            Log.d("Sawyer", "Received PAUSE action")
                             currentDownloadJobState.status = DownloadJobStatus.PAUSED
                         }
                         currentDownloadJobState.job?.cancel()
@@ -114,6 +117,7 @@ abstract class AbstractFetchDownloadService : Service() {
 
                     ACTION_RESUME -> {
                         synchronized(context) {
+                            Log.d("Sawyer", "Received RESUME action")
                             currentDownloadJobState.status = DownloadJobStatus.ACTIVE
                         }
 
@@ -199,7 +203,7 @@ abstract class AbstractFetchDownloadService : Service() {
         notificationUpdateScope.launch {
             while (isActive) {
                 delay(PROGRESS_UPDATE_INTERVAL)
-                updateDownloadNotificationProgress()
+                updateDownloadNotification()
             }
         }
 
@@ -210,9 +214,41 @@ abstract class AbstractFetchDownloadService : Service() {
      * Android rate limits notifications being sent, so we must send them on a delay so that
      * notifications are not dropped
      */
-    private fun updateDownloadNotificationProgress() {
+    private fun updateDownloadNotification() {
         synchronized(context) {
             for (download in downloadJobs.values) {
+                // TODO: Dispatch the correct notification based on the current status
+                // TODO: When we get a pause, just update the status not the notification
+
+                val notification = when (download.status) {
+                    DownloadJobStatus.PAUSED -> {
+                        synchronized(context) {
+                            DownloadNotification.createPausedDownloadNotification(context, download.state)
+                        }
+                    }
+
+                    DownloadJobStatus.COMPLETED -> {
+                        synchronized(context) {
+                            DownloadNotification.createDownloadCompletedNotification(context, download.state)
+                        }
+                    }
+
+                    DownloadJobStatus.FAILED -> {
+                        DownloadNotification.createDownloadFailedNotification(context, download.state)
+                    }
+
+                    else -> return
+                }
+
+                synchronized(context) {
+                    NotificationManagerCompat.from(context).notify(
+                        download.foregroundServiceId,
+                        notification
+                    )
+
+                    sendDownloadCompleteBroadcast(download.state.id, download.status)
+                }
+
                 if (download.status != DownloadJobStatus.ACTIVE) { continue }
                 // We must be synchronized here to avoid the status getting set to PAUSED on this line
                 // and then overwriting that with an ongoing notification anyway
@@ -247,23 +283,40 @@ abstract class AbstractFetchDownloadService : Service() {
     internal fun startDownloadJob(downloadId: Long) {
         val currentDownloadJobState = downloadJobs[downloadId] ?: return
 
+        try {
+            performDownload(currentDownloadJobState.state)
+
+            // TODO: Can I move this logic somewhere else?
+            if (currentDownloadJobState.status == DownloadJobStatus.ACTIVE) {
+                currentDownloadJobState.status = DownloadJobStatus.COMPLETED
+            }
+
+        } catch (e: IOException) {
+            currentDownloadJobState.status = DownloadJobStatus.FAILED
+        }
+
+        /*
         val notification = try {
             performDownload(currentDownloadJobState.state)
+
             when (currentDownloadJobState.status) {
                 DownloadJobStatus.PAUSED -> {
                     synchronized(context) {
+                        Log.d("Sawyer", "[$downloadId] Displaying PAUSED notification")
                         DownloadNotification.createPausedDownloadNotification(context, currentDownloadJobState.state)
                     }
                 }
 
                 DownloadJobStatus.ACTIVE -> {
                     synchronized(context) {
+                        Log.d("Sawyer", "[$downloadId] Displaying COMPLETED notification")
                         currentDownloadJobState.status = DownloadJobStatus.COMPLETED
                         DownloadNotification.createDownloadCompletedNotification(context, currentDownloadJobState.state)
                     }
                 }
 
                 DownloadJobStatus.FAILED -> {
+                    Log.d("Sawyer", "[$downloadId] Displaying FAILED notification")
                     DownloadNotification.createDownloadFailedNotification(context, currentDownloadJobState.state)
                 }
 
@@ -282,6 +335,8 @@ abstract class AbstractFetchDownloadService : Service() {
 
             sendDownloadCompleteBroadcast(downloadId, currentDownloadJobState.status)
         }
+
+         */
     }
 
     internal fun deleteDownloadingFile(downloadState: DownloadState) {
@@ -309,6 +364,8 @@ abstract class AbstractFetchDownloadService : Service() {
         )
 
         synchronized(context) {
+            Log.d("Sawyer", "[$download.id] Displaying ACTIVE notification")
+
             NotificationManagerCompat.from(context).notify(
                 downloadJobs[download.id]?.foregroundServiceId ?: 0,
                 ongoingDownloadNotification
@@ -502,7 +559,8 @@ abstract class AbstractFetchDownloadService : Service() {
         private const val CHUNK_SIZE = 4 * 1024
         private const val PARTIAL_CONTENT_STATUS = 206
         private const val OK_STATUS = 200
-        private const val PROGRESS_UPDATE_INTERVAL = 500L
+        // TODO: Play around with this interval
+        private const val PROGRESS_UPDATE_INTERVAL = 200L
 
         const val EXTRA_DOWNLOAD = "mozilla.components.feature.downloads.extras.DOWNLOAD"
         const val EXTRA_DOWNLOAD_STATUS = "mozilla.components.feature.downloads.extras.DOWNLOAD_STATUS"
